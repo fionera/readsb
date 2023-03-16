@@ -152,6 +152,7 @@ static struct argp_option optionsReadsb[] = {
     {"net-buffer", OptNetBuffer, "<n>", 0, "TCP buffer size 64Kb * (2^n) (default: n=2, 256Kb)", 2},
     {"net-verbatim", OptNetVerbatim, 0, 0, "Forward messages unchanged", 2},
     {"sdr-buffer-size", OptSdrBufSize, "<KiB>", 0, "SDR buffer / USB transfer size in kibibytes (default: 256 which is equivalent to around 54 ms using rtl-sdr, option might be ignored in future versions)", 2},
+    {"kafka-bootstrap", OptKafkaBootstrap, "host1:9092,host2:9092", 0, "Kafka Bootstrap serverlist", 2},
 #ifdef ENABLE_RTLSDR
     {0,0,0,0, "RTL-SDR options:", 3},
     {0,0,0, OPTION_DOC, "use with --device-type rtlsdr", 3},

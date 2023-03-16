@@ -2051,6 +2051,16 @@ out:
 }
 
 struct char_buffer writeJsonToFile (const char* dir, const char *file, struct char_buffer cb) {
+    if (strcmp(file, "aircraft.json") == 0) {
+        if (rd_kafka_produce(Modes.kafka_rkt, RD_KAFKA_PARTITION_UA,
+                             RD_KAFKA_MSG_F_COPY,
+                             cb.buffer, cb.len,
+                             NULL, 0,
+                             NULL) == -1) {
+            fprintf(stderr, "%% Failed to produce to topic %s: %s\n",
+                    "adsb", rd_kafka_err2str(rd_kafka_last_error()));
+        }
+    }
     return writeJsonTo(dir, file, cb, 0, 0);
 }
 

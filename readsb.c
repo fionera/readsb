@@ -1715,6 +1715,24 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
         case OptSdrBufSize:
             Modes.sdr_buf_size = atoi(arg) * 1024;
             break;
+        case OptKafkaBootstrap:
+            Modes.kafka_conf = rd_kafka_conf_new();
+
+            char errstr[512];
+            if (rd_kafka_conf_set(Modes.kafka_conf, "client.id", "readsb",
+                    errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+                fprintf(stderr, "%% %s\n", errstr);
+                exit(1);
+            }
+
+            char *bootstrap = strdup(arg);
+            if (rd_kafka_conf_set(Modes.kafka_conf, "bootstrap.servers", bootstrap,
+                                  errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+                fprintf(stderr, "%% %s\n", errstr);
+                exit(1);
+            }
+
+            break;
         case OptNetReceiverId:
             Modes.netReceiverId = 1;
             Modes.ping = 1;
@@ -2239,6 +2257,10 @@ static void checkReplaceState() {
 
 static void miscStuff(int64_t now) {
 
+    if (Modes.kafka_conf) {
+        rd_kafka_poll(Modes.kafka_rk, 0);
+    }
+
     checkNewDay(now);
 
     if (Modes.outline_json) {
@@ -2459,6 +2481,26 @@ int main(int argc, char **argv) {
     parseCommandLine(argc, argv);
 
     configAfterParse();
+
+    if (Modes.kafka_conf) {
+        Modes.kafka_topic_conf = rd_kafka_topic_conf_new();
+
+        char errstr[512];
+        if (rd_kafka_topic_conf_set(Modes.kafka_topic_conf, "acks", "all",
+                                    errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+            fprintf(stderr, "%% %s\n", errstr);
+            exit(1);
+        }
+
+        /* Create Kafka producer handle */
+        if (!(Modes.kafka_rk = rd_kafka_new(RD_KAFKA_PRODUCER, Modes.kafka_conf,
+                                errstr, sizeof(errstr)))) {
+            fprintf(stderr, "%% Failed to create new producer: %s\n", errstr);
+            exit(1);
+        }
+
+        Modes.kafka_rkt= rd_kafka_topic_new(Modes.kafka_rk, "adsb", Modes.kafka_topic_conf);
+    }
 
     // Initialization
     //log_with_timestamp("%s starting up.", MODES_READSB_VARIANT);

@@ -102,6 +102,7 @@
 #include <stdatomic.h>
 #include <zstd.h>
 #include <sys/mman.h>
+#include <librdkafka/rdkafka.h>
 
 
 #include "compat/compat.h"
@@ -841,6 +842,11 @@ struct _Modes
     ALIGNED struct distCoords rangeDirs[RANGEDIRS_IVALS][RANGEDIRS_BUCKETS];
 
     int64_t apiShutdownDelay;
+
+    rd_kafka_t *kafka_rk;
+    rd_kafka_conf_t *kafka_conf;
+    rd_kafka_topic_t *kafka_rkt;
+    rd_kafka_topic_conf_t *kafka_topic_conf;
 };
 
 extern struct _Modes Modes;
@@ -1188,6 +1194,7 @@ enum {
     OptNetReceiverIdJson,
     OptNetIngest,
     OptSdrBufSize,
+    OptKafkaBootstrap,
     OptGarbage,
     OptDecodeThreads,
     OptUuidFile,
