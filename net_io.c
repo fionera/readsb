@@ -187,6 +187,7 @@ static struct net_service *serviceInit(struct net_service_group *group, const ch
         service->writer->lastWrite = mstime();
         service->writer->lastReceiverId = 0;
         service->writer->connections = 0;
+        pthread_mutex_init(&service->writer->mutex, NULL);
     }
 
     return service;
@@ -1534,6 +1535,8 @@ static char *netTimestamp(char *p, int64_t timestamp) {
 // Write raw output in Beast Binary format with Timestamp to TCP clients
 //
 static void modesSendBeastOutput(struct modesMessage *mm, struct net_writer *writer) {
+    pthread_mutex_lock(&writer->mutex);
+
     int msgLen = mm->msgbits / 8;
     // 0x1a 0xe3 receiverId(2*8) 0x1a msgType timestamp+signal(2*7) message(2*msgLen)
     char *p = prepareWrite(writer, (2 + 2 * 8 + 2 + 2 * 7) + 2 * msgLen);
@@ -1542,8 +1545,10 @@ static void modesSendBeastOutput(struct modesMessage *mm, struct net_writer *wri
     int sig;
     unsigned char *msg = (Modes.net_verbatim ? mm->verbatim : mm->msg);
 
-    if (!p)
+    if (!p) {
+        pthread_mutex_unlock(&writer->mutex);
         return;
+    }
 
     // receiverId, big-endian, in own message to make it backwards compatible
     // only send the receiverId when it changes
@@ -1568,6 +1573,7 @@ static void modesSendBeastOutput(struct modesMessage *mm, struct net_writer *wri
     } else if (msgLen == MODEAC_MSG_BYTES) {
         *p++ = '1';
     } else {
+        pthread_mutex_unlock(&writer->mutex);
         return;
     }
 
@@ -1592,6 +1598,7 @@ static void modesSendBeastOutput(struct modesMessage *mm, struct net_writer *wri
     }
 
     completeWrite(writer, p);
+    pthread_mutex_unlock(&writer->mutex);
 }
 
 static void modesDumpBeastData(struct modesMessage *mm) {
@@ -3339,17 +3346,6 @@ static int readBeast(struct client *c, int64_t now, struct messageBuffer *mb) {
             eom = p + 1 + 6 + 1 + MODES_LONG_MSG_BYTES;
         } else if (ch == '1') {
             eom = p + 1 + 6 + 1 + MODEAC_MSG_BYTES;
-            if (0) {
-                char sample[256];
-                char *sampleStart = c->som - 32;
-                if (sampleStart < c->buf)
-                    sampleStart = c->buf;
-                *c->som = 'X';
-                hexDumpString(sampleStart, c->eod - sampleStart, sample, sizeof(sample));
-                *c->som = 0x1a;
-                sample[sizeof(sample) - 1] = '\0';
-                fprintf(stderr, "modeAC: som pos %d, sample %s, eom > c->eod %d\n", (int) (c->som - c->buf), sample, eom > c->eod);
-            }
         } else if (ch == '5') {
             eom = p + MODES_LONG_MSG_BYTES + 8;
         } else if (ch == 0xe4) {
@@ -3422,19 +3418,6 @@ static int readBeast(struct client *c, int64_t now, struct messageBuffer *mb) {
                         c->garbage += p - 1 - c->som;
                         Modes.stats_current.remote_malformed_beast += p - 1 - c->som;
                         c->som = p - 1;
-
-                        if (0) {
-                            char sample[256];
-                            char *sampleStart = c->som - 32;
-                            if (sampleStart < c->buf)
-                                sampleStart = c->buf;
-                            *c->som = 'X';
-                            hexDumpString(sampleStart, c->eod - sampleStart, sample, sizeof(sample));
-                            *c->som = 0x1a;
-                            sample[sizeof(sample) - 1] = '\0';
-                            fprintf(stderr, "not a double Escape: som pos %d, sample %s, eom - som %d\n", (int) (c->som - c->buf), sample, (int) (eom - c->som));
-
-                        }
 
                         goto beastWhileContinue;
                     }

@@ -188,6 +188,7 @@ struct net_writer
     int64_t lastWrite; // time of last write to clients
     uint64_t lastReceiverId;
     int noTimestamps;
+    pthread_mutex_t mutex;
 };
 
 void serviceListen (struct net_service *service, char *bind_addr, char *bind_ports, int epfd);
