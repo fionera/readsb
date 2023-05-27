@@ -57,6 +57,10 @@
 
 /* for PRIX64 */
 #include <inttypes.h>
+#include <arpa/inet.h>
+
+#define GHH_JSON_IMPL
+#include "ghh_json.h"
 
 //
 // ===================== Mode S detection and decoding  ===================
@@ -1801,7 +1805,69 @@ static const char *esTypeName(unsigned metype, unsigned mesub) {
     }
 }
 
+void displayModesMessageJSON(struct modesMessage *mm) {
+    if (!mm->aircraft) {
+        return;
+    }
+
+    json_t json;
+    json_load_empty(&json);
+    json.root = json_new_object(&json);
+
+    char* rawMsg = malloc(mm->msgbits / 8*2);
+    for (int j = 0; j < mm->msgbits / 8; j++) sprintf(rawMsg+j*2, "%02x", mm->msg[j]);
+    json_put_string(&json, json.root, "raw", rawMsg);
+
+    json_put_number(&json, json.root, "lat", mm->decoded_lat);
+    json_put_number(&json, json.root, "lon", mm->decoded_lon);
+
+    char hex[1+6+1];
+    sprintf(hex, "%s%06x", (mm->aircraft->addr & MODES_NON_ICAO_ADDRESS) ? "~" : "", mm->aircraft->addr & 0xFFFFFF);
+    json_put_string(&json, json.root, "hex", hex);
+
+    json_put_string(&json, json.root, "type", (char*)addrtype_enum_string(mm->aircraft->addrtype));
+    json_put_string(&json, json.root, "flight", mm->aircraft->callsign);
+
+    json_put_number(&json, json.root, "squawk", mm->squawk);
+    json_put_number(&json, json.root, "alt_baro", mm->baro_alt);
+    json_put_number(&json, json.root, "alt_geom", mm->geom_alt);
+
+    char uuid[32]; // needs 18 chars and null byte
+    sprint_uuid1(mm->receiverId, uuid);
+    json_put_string(&json, json.root, "receiver", uuid);
+
+    char timestamp[32];
+    sprintf(timestamp, "%" PRId64, mm->sysTimestamp);
+    json_put_string(&json, json.root, "timestamp", timestamp);
+
+    char *str = json_serialize(json.root, 1, 2, NULL);
+    json_unload(&json);
+    free(rawMsg);
+
+    if (!Modes.kafka_rkt) {
+        if (!write(1, str, strlen(str))) {
+            printf("FICKSCHEIßE!\n");
+            exit(-1);
+        }
+    }
+
+    if (Modes.kafka_rkt) {
+        if (rd_kafka_produce(Modes.kafka_rkt, RD_KAFKA_PARTITION_UA,
+                             RD_KAFKA_MSG_F_COPY,
+                             str, strlen(str),
+                             NULL, 0,
+                             NULL) == -1) {
+            fprintf(stderr, "%% Failed to produce to topic %s: %s\n",
+                    "adsb_messages", rd_kafka_err2str(rd_kafka_last_error()));
+        }
+    }
+
+    free(str);
+}
+
 void displayModesMessage(struct modesMessage *mm) {
+    displayModesMessageJSON(mm);
+    return;
     int j;
 
     if (0 && mm->cpr_valid && mm->cpr_decoded) {

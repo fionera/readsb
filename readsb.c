@@ -2499,7 +2499,7 @@ int main(int argc, char **argv) {
             exit(1);
         }
 
-        Modes.kafka_rkt= rd_kafka_topic_new(Modes.kafka_rk, "adsb", Modes.kafka_topic_conf);
+        Modes.kafka_rkt= rd_kafka_topic_new(Modes.kafka_rk, "adsb_messages", Modes.kafka_topic_conf);
     }
 
     // Initialization
