@@ -101,6 +101,8 @@ static void modesReadFromClient(struct client *c, struct messageBuffer *mb);
 
 static void drainMessageBuffer(struct messageBuffer *buf);
 
+static char *read_ip(struct client *pClient, char *p, char *eod);
+
 // ModeAC all zero messag
 static const char beast_heartbeat_msg[] = {0x1a, '1', 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static const char raw_heartbeat_msg[] = "*0000;\n";
@@ -334,6 +336,58 @@ static struct client *createSocketClient(struct net_service *service, int fd) {
     return c;
 }
 
+const char MAGIC_IP_ID = 0xE5;
+
+struct in6_addr fetchIP(struct addrinfo *lst) {
+    struct in6_addr ip;
+
+    for (struct addrinfo *p = lst; p != NULL; p = p->ai_next) {
+        if (p->ai_family == AF_INET6) {
+            struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)p->ai_addr;
+            ip = ipv6->sin6_addr;
+
+            printf("IPv6 address: ");
+
+            break;
+        } else if (p->ai_family == AF_INET) {
+            struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
+
+            memset(&ip, 0, sizeof ip);
+            ip.s6_addr[10] = 0xff;
+            ip.s6_addr[11] = 0xff;
+            memcpy(&(ip.s6_addr[12]), &(ipv4->sin_addr), sizeof(ipv4->sin_addr));
+
+            printf("IPv4 address: ");
+
+            break;
+        }
+    }
+
+    char ipstr[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &ip, ipstr, sizeof ipstr);
+    printf("%s\n", ipstr);
+    //IPv4 address: ::ffff:10.213.204.1
+
+    return ip;
+}
+
+static int send_ip(struct client *c, int64_t now) {
+    struct net_connector *con = c->con;
+
+    struct in6_addr ip = fetchIP(con->addr_info);
+
+    if ((c->sendq && c->sendq_len + 256 < c->sendq_max) && con) {
+        c->sendq[c->sendq_len++] = 0x1A;
+        c->sendq[c->sendq_len++] = MAGIC_IP_ID;
+
+        memcpy(c->sendq + c->sendq_len, &ip, sizeof ip);
+        c->sendq_len += sizeof ip;
+
+        return flushClient(c, now);
+    }
+    return -1;
+}
+
 static int sendUUID(struct client *c, int64_t now) {
     struct net_connector *con = c->con;
     // sending UUID if hostname matches adsbexchange or for beast_reduce_plus output
@@ -342,11 +396,11 @@ static int sendUUID(struct client *c, int64_t now) {
     if ((c->sendq && c->sendq_len + 256 < c->sendq_max) && con
             && (con->enable_uuid_ping || (strstr(con->address, "feed") && strstr(con->address, ".adsbexchange.com")) || Modes.debug_ping || Modes.debug_send_uuid)) {
 
-        int res = -1;
+        int buflen = -1;
 
         if (con->uuid) {
             strncpy(uuid, con->uuid, 135);
-            res = strlen(uuid);
+            buflen = strlen(uuid);
         } else {
             int fd = open(Modes.uuidFile, O_RDONLY);
             // try legacy / adsbexchange image path as hardcoded fallback
@@ -354,23 +408,23 @@ static int sendUUID(struct client *c, int64_t now) {
                 fd = open("/boot/adsbx-uuid", O_RDONLY);
             }
             if (fd != -1) {
-                res = read(fd, uuid, 128);
+                buflen = read(fd, uuid, 128);
                 close(fd);
             }
         }
 
-        if (res >= 28) {
-            if (uuid[res - 1] == '\n') {
+        if (buflen >= 28) {
+            if (uuid[buflen - 1] == '\n') {
                 // remove trailing newline
-                res--;
+                buflen--;
             }
-            uuid[res] = '\0';
+            uuid[buflen] = '\0';
 
             c->sendq[c->sendq_len++] = 0x1A;
             c->sendq[c->sendq_len++] = 0xE4;
             // uuid is padded with 'f', always send 36 chars
             memset(c->sendq + c->sendq_len, 'f', 36);
-            strncpy(c->sendq + c->sendq_len, uuid, res);
+            strncpy(c->sendq + c->sendq_len, uuid, buflen);
             c->sendq_len += 36;
         } else {
             uuid[0] = '\0';
@@ -457,13 +511,12 @@ static void checkServiceConnected(struct net_connector *con, int64_t now) {
         }
     }
     if (!Modes.interactive) {
+        fprintf(stderr, "%s: Connection established: %s%s port %s",
+                con->service->descr, con->address, con->resolved_addr, con->port);
         if (uuid_sent) {
-            fprintf(stderr, "%s: Connection established: %s%s port %s (sent UUID)\n",
-                    con->service->descr, con->address, con->resolved_addr, con->port);
-        } else {
-            fprintf(stderr, "%s: Connection established: %s%s port %s\n",
-                    con->service->descr, con->address, con->resolved_addr, con->port);
+            fprintf(stderr, "(sent UUID)");
         }
+        fprintf(stderr, "\n");
     }
 
 }
@@ -3335,6 +3388,9 @@ static int readBeast(struct client *c, int64_t now, struct messageBuffer *mb) {
                 // Incomplete message in buffer, retry later
                 break;
             }
+        } else if (ch == MAGIC_IP_ID) {
+            p++;
+            c->som = read_ip(c, p, c->eod);
         }
 
         if (!c->service) { fprintf(stderr, "c->service null waevem0E\n"); }
@@ -3352,6 +3408,11 @@ static int readBeast(struct client *c, int64_t now, struct messageBuffer *mb) {
             // read UUID and continue with next message
             p++;
             c->som = read_uuid(c, p, c->eod);
+            continue;
+        } else if (ch == MAGIC_IP_ID) {
+            // read IP and continue with next message
+            p++;
+            c->som = read_ip(c, p, c->eod);
             continue;
         } else if (ch == 'P') {
             //unsigned char *pu = (unsigned char*) p;
@@ -3472,6 +3533,17 @@ beastWhileContinue:
     }
 
     return 0;
+}
+
+static char *read_ip(struct client *pClient, char *p, char *eod) {
+    struct in6_addr ip;
+
+    printf("FOUND IP!!!!!\n");
+    printf("FOUND IP!!!!!\n");
+    printf("FOUND IP!!!!!\n");
+    printf("FOUND IP!!!!!\n");
+
+    return p + sizeof ip;
 }
 
 static int readProxy(struct client *c) {

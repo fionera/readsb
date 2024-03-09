@@ -1818,19 +1818,10 @@ void displayModesMessageJSON(struct modesMessage *mm) {
     for (int j = 0; j < mm->msgbits / 8; j++) sprintf(rawMsg+j*2, "%02x", mm->msg[j]);
     json_put_string(&json, json.root, "raw", rawMsg);
 
-    json_put_number(&json, json.root, "lat", mm->decoded_lat);
-    json_put_number(&json, json.root, "lon", mm->decoded_lon);
-
     char hex[1+6+1];
     sprintf(hex, "%s%06x", (mm->aircraft->addr & MODES_NON_ICAO_ADDRESS) ? "~" : "", mm->aircraft->addr & 0xFFFFFF);
     json_put_string(&json, json.root, "hex", hex);
-
     json_put_string(&json, json.root, "type", (char*)addrtype_enum_string(mm->aircraft->addrtype));
-    json_put_string(&json, json.root, "flight", mm->aircraft->callsign);
-
-    json_put_number(&json, json.root, "squawk", mm->squawk);
-    json_put_number(&json, json.root, "alt_baro", mm->baro_alt);
-    json_put_number(&json, json.root, "alt_geom", mm->geom_alt);
 
     char uuid[32]; // needs 18 chars and null byte
     sprint_uuid1(mm->receiverId, uuid);
@@ -1839,6 +1830,175 @@ void displayModesMessageJSON(struct modesMessage *mm) {
     char timestamp[32];
     sprintf(timestamp, "%" PRId64, mm->sysTimestamp);
     json_put_string(&json, json.root, "timestamp", timestamp);
+
+    int pos_type = 0;
+    if (trackDataValid(&mm->aircraft->position_valid)) {
+        // pos type message
+        pos_type = 1;
+
+        json_put_number(&json, json.root, "lat", mm->aircraft->lat);
+        json_put_number(&json, json.root, "lon", mm->aircraft->lon);
+    } else if (trackDataValid(&mm->aircraft->mlat_pos_valid)) {
+        // pos type mlat
+        pos_type = 2;
+
+        json_put_number(&json, json.root, "lat", mm->aircraft->mlat_lat);
+        json_put_number(&json, json.root, "lon", mm->aircraft->mlat_lon);
+    }
+
+    if (pos_type) {
+        json_put_number(&json, json.root, "pos_type", pos_type);
+
+        // NIC of last computed position
+        json_put_number(&json, json.root, "pos_nic", mm->aircraft->pos_nic);
+
+        // Rc of last computed position
+        json_put_number(&json, json.root, "pos_rc", mm->aircraft->pos_rc);
+    }
+
+    if (trackDataValid(&mm->aircraft->baro_rate_valid))
+        json_put_number(&json, json.root, "baro_rate", mm->aircraft->baro_rate);
+    if (trackDataValid(&mm->aircraft->geom_rate_valid))
+        json_put_number(&json, json.root, "geom_rate", mm->aircraft->geom_rate);
+    if (trackDataValid(&mm->aircraft->baro_alt_valid))
+        json_put_number(&json, json.root, "baro_alt", mm->aircraft->baro_alt);
+    if (trackDataValid(&mm->aircraft->geom_alt_valid))
+        json_put_number(&json, json.root, "geom_alt", mm->aircraft->geom_alt);
+
+    // FCU/MCP selected altitude
+    if (trackDataValid(&mm->aircraft->nav_altitude_mcp_valid))
+        json_put_number(&json, json.root, "nav_altitude_mcp", mm->aircraft->nav_altitude_mcp);
+
+    // FMS selected altitude
+    if (trackDataValid(&mm->aircraft->nav_altitude_fms_valid))
+        json_put_number(&json, json.root, "nav_altitude_fms", mm->aircraft->nav_altitude_fms);
+
+    // Altimeter setting (QNH/QFE), millibars
+    if (trackDataValid(&mm->aircraft->nav_qnh_valid))
+        json_put_number(&json, json.root, "nav_qnh", mm->aircraft->nav_qnh);
+
+    // target heading, degrees (0-359)
+    if (trackDataValid(&mm->aircraft->nav_heading_valid))
+        json_put_number(&json, json.root, "nav_heading", mm->aircraft->nav_heading);
+
+    // Squawk
+    if (trackDataValid(&mm->aircraft->squawk_valid))
+        json_put_number(&json, json.root, "squawk", mm->aircraft->squawk);
+
+    if (trackDataValid(&mm->aircraft->gs_valid))
+        json_put_number(&json, json.root, "gs", mm->aircraft->gs);
+    if (trackDataValid(&mm->aircraft->mach_valid))
+        json_put_number(&json, json.root, "mach", mm->aircraft->mach);
+
+    // Roll angle, degrees right
+    if (trackDataValid(&mm->aircraft->roll_valid))
+        json_put_number(&json, json.root, "roll", mm->aircraft->roll);
+
+    // Ground track
+    if (trackDataValid(&mm->aircraft->track_valid))
+        json_put_number(&json, json.root, "track", mm->aircraft->track);
+
+    // Rate of change of ground track, degrees/second
+    if (trackDataValid(&mm->aircraft->track_rate_valid))
+        json_put_number(&json, json.root, "track_rate", mm->aircraft->track_rate);
+
+    // Magnetic heading
+    if (trackDataValid(&mm->aircraft->mag_heading_valid))
+        json_put_number(&json, json.root, "mag_heading", mm->aircraft->mag_heading);
+
+    // True heading
+    if (trackDataValid(&mm->aircraft->true_heading_valid))
+        json_put_number(&json, json.root, "true_heading", mm->aircraft->true_heading);
+
+    // unknown... just print them
+    json_put_number(&json, json.root, "wind_direction", mm->aircraft->wind_direction);
+    json_put_number(&json, json.root, "wind_speed", mm->aircraft->wind_speed);
+    json_put_number(&json, json.root, "oat", mm->aircraft->oat);
+    json_put_number(&json, json.root, "tat", mm->aircraft->tat);
+
+    if (trackDataValid(&mm->aircraft->tas_valid))
+        json_put_number(&json, json.root, "tas", mm->aircraft->tas);
+    if (trackDataValid(&mm->aircraft->ias_valid))
+        json_put_number(&json, json.root, "ias", mm->aircraft->ias);
+
+    // Aircraft category A0 - D7 encoded as a single hex byte. 00 = unset
+    char category[3];
+    sprintf(category, "%02x", mm->aircraft->category);
+    json_put_string(&json, json.root, "category", category);
+
+    // enabled modes (autopilot, vnav, etc)
+    if (trackDataValid(&mm->aircraft->nav_modes_valid))
+        json_put_number(&json, json.root, "nav_modes", mm->aircraft->nav_modes);
+
+    // Emergency/priority status
+    if (trackDataValid(&mm->aircraft->emergency_valid))
+        json_put_number(&json, json.root, "emergency", mm->aircraft->emergency);
+
+    // air/ground status
+    if (trackDataValid(&mm->aircraft->airground_valid))
+        json_put_number(&json, json.root, "airground", mm->aircraft->airground);
+
+    // source of altitude used by automation
+    if (trackDataValid(&mm->aircraft->nav_altitude_src_valid))
+        json_put_number(&json, json.root, "nav_altitude_src", mm->aircraft->nav_altitude_src);
+
+    // SIL supplement from TSS or opstatus
+    if (trackDataValid(&mm->aircraft->sil_valid)) {
+        // SIL_INVALID, SIL_UNKNOWN, SIL_PER_SAMPLE, SIL_PER_HOUR
+        json_put_number(&json, json.root, "sil_type", mm->aircraft->sil_type);
+        json_put_number(&json, json.root, "sil", mm->aircraft->sil);
+    }
+
+    // ADS-B version (from ADS-B operational status) -1 means no ADS-B messages seen
+    if (mm->aircraft->adsb_version != -1)
+        json_put_number(&json, json.root, "adsb_version", mm->aircraft->adsb_version);
+
+    // As above, for ADS-R messages
+    if (mm->aircraft->adsr_version != -1)
+        json_put_number(&json, json.root, "adsr_version", mm->aircraft->adsr_version);
+
+    // As above, for TIS-B messages
+    if (mm->aircraft->tisb_version != 1)
+        json_put_number(&json, json.root, "tisb_version", mm->aircraft->tisb_version);
+
+    // NACp from TSS or opstatus
+    if (trackDataValid(&mm->aircraft->nac_p_valid))
+        json_put_number(&json, json.root, "nac_p", mm->aircraft->nac_p);
+
+    // NACv from airborne velocity or opstatus
+    if (trackDataValid(&mm->aircraft->nac_v_valid))
+        json_put_number(&json, json.root, "nac_v", mm->aircraft->nac_v);
+
+    // GVA from opstatus
+    if (trackDataValid(&mm->aircraft->gva_valid))
+        json_put_number(&json, json.root, "gva", mm->aircraft->gva);
+
+    // SDA from opstatus
+    if (trackDataValid(&mm->aircraft->sda_valid))
+        json_put_number(&json, json.root, "sda", mm->aircraft->sda);
+
+    // NIC supplement A from opstatus
+    if (trackDataValid(&mm->aircraft->nic_a_valid))
+        json_put_number(&json, json.root, "nic_a", mm->aircraft->nic_a);
+
+    // NIC supplement C from opstatus
+    if (trackDataValid(&mm->aircraft->nic_c_valid))
+        json_put_number(&json, json.root, "nic_c", mm->aircraft->nic_c);
+
+    // NIC baro supplement from TSS or opstatus
+    if (trackDataValid(&mm->aircraft->nic_baro_valid))
+        json_put_number(&json, json.root, "nic_baro", mm->aircraft->nic_baro);
+
+    // FS Flight status alert bit
+    if (trackDataValid(&mm->aircraft->alert_valid))
+        json_put_number(&json, json.root, "alert", mm->aircraft->alert);
+
+    // FS Flight status SPI (Special Position Identification) bit
+    if (trackDataValid(&mm->aircraft->spi_valid))
+        json_put_number(&json, json.root, "spi", mm->aircraft->spi);
+
+    json_put_string(&json, json.root, "callsign", mm->aircraft->callsign);
+    json_put_number(&json, json.root, "signal", get8bitSignal(mm->aircraft));
 
     char *str = json_serialize(json.root, 1, 2, NULL);
     json_unload(&json);
